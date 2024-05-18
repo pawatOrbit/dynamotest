@@ -4,6 +4,7 @@ package main
 
 import (
 	"dytest/model"
+	"log"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,16 +19,19 @@ type Controller interface {
 	CreateTable(c *fiber.Ctx) error
 	DeleteTable(c *fiber.Ctx) error
 	SaveMovieItem(c *fiber.Ctx) error
-    GetMovieItem(c *fiber.Ctx) error
+	GetMovieItem(c *fiber.Ctx) error
 	ScanMovies(c *fiber.Ctx) error
+	DeleteMovieItem(c *fiber.Ctx) error
+	UpdateMovieItem(c *fiber.Ctx) error
 }
 
 type DynamoDBController struct {
 	Client *dynamodb.Client
+	Service *DynamoDBService
 }
 
 func (ctrl *DynamoDBController) GetTableList(c *fiber.Ctx) error {
-	res, err := GetTableList(ctrl.Client)
+	res, err := ctrl.Service.GetTableList(ctrl.Client)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(ErrorMessage{Error: err.Error()})
 	}
@@ -97,34 +101,70 @@ func (ctrl *DynamoDBController) SaveMovieItem(c *fiber.Ctx) error {
 	return c.Status(http.StatusCreated).SendString("Movie item saved successfully")
 }
 
-
 func (ctrl *DynamoDBController) GetMovieItem(c *fiber.Ctx) error {
-    // Parse request body to extract the keys for the movie item
-    type keys map[string]types.AttributeValue
+
+	type keys map[string]types.AttributeValue
 	var movie model.MovieGetItem
-    if err := c.BodyParser(&movie); err != nil {
-        return c.Status(http.StatusBadRequest).SendString("Invalid request body!")
-    }
+	if err := c.BodyParser(&movie); err != nil {
+		return c.Status(http.StatusBadRequest).SendString("Invalid request body!")
+	}
 	titleAttr, _ := attributevalue.Marshal(movie.Title)
 	yearAttr, _ := attributevalue.Marshal(movie.Year)
 
-    // Retrieve movie item from DynamoDB
-    movieItem, err := GetMovieItem(ctrl.Client,keys{"title" : titleAttr,"year" : yearAttr})
-    if err != nil {
-        return c.Status(http.StatusInternalServerError).SendString("Failed to get movie item: " + err.Error())
-    }
+	movieItem, err := GetMovieItem(ctrl.Client, keys{"title": titleAttr, "year": yearAttr})
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to get movie item: " + err.Error())
+	}
 
-    // Return the movie item in the response
-    return c.JSON(movieItem)
+	return c.JSON(movieItem)
 }
 
 func (ctrl *DynamoDBController) ScanMovies(c *fiber.Ctx) error {
-    // Retrieve movies from DynamoDB
-    movies, err := ScanMovies(ctrl.Client)
-    if err != nil {
-        return c.Status(http.StatusInternalServerError).SendString("Failed to scan movies: " + err.Error())
-    }
-
-    // Return the movies in the response
-    return c.JSON(movies)
+	movies, err := ScanMovies(ctrl.Client)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to scan movies: " + err.Error())
+	}
+	return c.JSON(movies)
 }
+
+func (ctrl *DynamoDBController) DeleteMovieItem(c *fiber.Ctx) error {
+	type keys map[string]types.AttributeValue
+
+	var movie model.MovieGetItem
+	if err := c.BodyParser(&movie); err != nil {
+		return c.Status(http.StatusBadRequest).SendString("Invalid request body!")
+	}
+	titleAttr, _ := attributevalue.Marshal(movie.Title)
+	yearAttr, _ := attributevalue.Marshal(movie.Year)
+	err := DeleteMovieItem(ctrl.Client, keys{"title": titleAttr, "year": yearAttr})
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to delete movie item: " + err.Error())
+	}
+	return c.SendString("Movie item deleted successfully")
+}
+
+func (ctrl *DynamoDBController) UpdateMovieItem(c *fiber.Ctx) error {
+
+	type keys map[string]types.AttributeValue
+	var requestBody model.UpdateMovie
+
+	if err := c.BodyParser(&requestBody); err != nil {
+		return c.Status(http.StatusBadRequest).SendString("Invalid request body")
+	}
+
+	avMap, err_ := attributevalue.MarshalMap(requestBody.ExpressionAttributeValues)
+	if err_ != nil {
+		log.Fatalf("Failed to marshal map: %v", err_)
+	}
+
+	titleAttr, _ := attributevalue.Marshal(requestBody.Title)
+	yearAttr, _ := attributevalue.Marshal(requestBody.Year)
+
+	err := UpdateMovieItem(ctrl.Client, requestBody.TableName, keys{"title": titleAttr, "year": yearAttr}, requestBody.UpdateExpression, avMap)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to update movie item: " + err.Error())
+	}
+
+	return c.SendString("Movie item updated successfully")
+}
+

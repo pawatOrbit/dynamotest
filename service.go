@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	dynamodbClient "dytest/dynamodb"
 	"dytest/model"
 	"errors"
 	"log"
@@ -13,8 +14,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-func GetTableList(c *dynamodb.Client) ([]string, error) {
+type DynamoDBService struct {
+	Ctr *dynamodbClient.DynamodbClient
+}
+
+func (cs *DynamoDBService) GetTableList(c *dynamodb.Client) ([]string, error) {
 	out, err := c.ListTables(context.Background(), &dynamodb.ListTablesInput{})
+
 	if err != nil {
 		return nil, err
 	}
@@ -98,12 +104,10 @@ func GetMovieItem(c *dynamodb.Client, key map[string]types.AttributeValue) (mode
 		return model.MovieItem{}, err
 	}
 
-	// Check if the response contains any items
 	if len(output.Responses) == 0 || output.Responses[0].Item == nil {
 		return model.MovieItem{}, errors.New("no item found")
 	}
 
-	// Unmarshal the item
 	var movieItem model.MovieItem
 	if err := attributevalue.UnmarshalMap(output.Responses[0].Item, &movieItem); err != nil {
 		log.Printf("Failed to unmarshal movie item: %v\n", err)
@@ -114,19 +118,16 @@ func GetMovieItem(c *dynamodb.Client, key map[string]types.AttributeValue) (mode
 }
 
 func ScanMovies(c *dynamodb.Client) ([]model.MovieItem, error) {
-	// Create input parameters for Scan operation
 	input := &dynamodb.ScanInput{
 		TableName: aws.String("Movies"),
 	}
 
-	// Perform Scan operation
 	result, err := c.Scan(context.Background(), input)
 	if err != nil {
 		log.Printf("Failed to scan items: %v\n", err)
 		return nil, err
 	}
 
-	// Unmarshal scanned items
 	var movies []model.MovieItem
 	for _, item := range result.Items {
 		var movie model.MovieItem
@@ -138,4 +139,36 @@ func ScanMovies(c *dynamodb.Client) ([]model.MovieItem, error) {
 	}
 
 	return movies, nil
+}
+
+func DeleteMovieItem(c *dynamodb.Client, key map[string]types.AttributeValue) error {
+	input := &dynamodb.DeleteItemInput{
+		TableName: aws.String("Movies"),
+		Key:       key,
+	}
+	_, err := c.DeleteItem(context.Background(), input)
+	if err != nil {
+		log.Printf("Failed to delete item: %v\n", err)
+		return err
+	}
+
+	return nil
+}
+
+func UpdateMovieItem(c *dynamodb.Client, tableName string, key map[string]types.AttributeValue, updateExpression string, expressionAttributeValues map[string]types.AttributeValue) error {
+	input := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String(updateExpression),
+		ExpressionAttributeValues: expressionAttributeValues,
+		ReturnValues:              types.ReturnValueUpdatedNew,
+	}
+
+	_, err := c.UpdateItem(context.Background(), input)
+	if err != nil {
+		log.Printf("Failed to update item: %v\n", err)
+		return err
+	}
+
+	return nil
 }
